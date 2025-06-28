@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bot
+  namespace: application
+spec:
+  selector:
+    matchLabels:
+      app: bot
+  template:
+    metadata:
+      labels:
+        app: bot
+    spec:
+      containers:
+        - name: bot
+          image: stacenko63/bot
+          resources:
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          ports:
+            - name: bot
+              containerPort: 8080
+            - name: management
+              containerPort: 8000
+          envFrom:
+            - secretRef:
+                name: bot-secrets
+      imagePullSecrets:
+        - name: dockerhub-secret

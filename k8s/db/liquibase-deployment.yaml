@@ -1,0 +1,32 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: liquibase-migration
+  namespace: db
+spec:
+  template:
+    spec:
+      containers:
+        - name: liquibase
+          image: liquibase/liquibase:4.29
+          command: ["/liquibase/liquibase"]
+          args:
+            - "--changelog-file=master.xml"
+            - "--searchPath=/changesets"
+            - "--driver=org.postgresql.Driver"
+            - "--url=jdbc:postgresql://postgres:5432/$(POSTGRES_DB)"
+            - "--username=$(POSTGRES_USER)"
+            - "--password=$(POSTGRES_PASSWORD)"
+            - "update"
+          volumeMounts:
+            - name: migrations
+              mountPath: /changesets
+          envFrom:
+            - secretRef:
+                name: postgres-secrets
+      volumes:
+        - name: migrations
+          configMap:
+            name: liquibase-migrations
+      restartPolicy: Never
+  backoffLimit: 2

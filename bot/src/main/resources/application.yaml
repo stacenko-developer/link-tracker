@@ -1,0 +1,133 @@
+app:
+  telegram-token: ${TELEGRAM_TOKEN}
+  cache:
+    bot-tracking-links: botTrackingLinks
+  kafka-topics:
+    immediate-link-update:
+      name: immediate_link_update
+      value-type: backend.academy.bot.dto.linkUpdate.ImmediateLinkUpdate
+    digest-link-update:
+      name: digest_link_update
+      value-type: backend.academy.bot.dto.linkUpdate.DigestLinkUpdate
+  resilience-instances:
+    scrapper-service:
+      circuit-breaker: &scrapper-service-circuit-breaker scrapper-service-circuit-breaker
+      retry: &scrapper-service-retry scrapper-service-retry
+
+spring:
+  config:
+    import: classpath:message.yaml
+  application:
+    name: Bot
+  liquibase:
+    enabled: false
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  data:
+    redis:
+      host: ${REDIS_HOST}
+      port: ${REDIS_PORT}
+      password: ${REDIS_PASSWORD}
+  kafka:
+    bootstrap-servers: ${KAFKA_HOST}:${KAFKA_PORT}
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        spring.json.add.type.headers: false
+    consumer:
+      group-id: bot
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.ErrorHandlingDeserializer
+      properties:
+        spring.deserializer.value.delegate.class: org.springframework.kafka.support.serializer.JsonDeserializer
+        spring.json.trusted.packages: backend.academy.bot.dto.linkUpdate
+        spring.json.value.default.type: backend.academy.bot.dto.linkUpdate.ImmediateLinkUpdate
+        spring.json.use.type.headers: false
+        spring.json.ignore.unknown.properties: true
+      auto-offset-reset: earliest
+
+server:
+  port: ${BOT_SERVICE_PORT}
+
+springdoc:
+  swagger-ui:
+    enabled: true
+    path: /swagger-ui
+
+client:
+  scrapper:
+    base-url: http://${SCRAPPER_HOST}:${SCRAPPER_PORT}
+    connect-timeout-millis: 2000
+    read-timeout-millis: 3000
+    response-timeout-millis: 5000
+
+rate-limiter:
+  limit-for-period: 5
+  limit-refresh-period: 1s
+  timeout-duration: 0
+
+resilience4j:
+  circuitbreaker:
+    circuit-breaker-aspect-order: 1
+    configs:
+      default:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 20
+        minimum-number-of-calls: 10
+        failure-rate-threshold: 50
+        permitted-number-of-calls-in-half-open-state: 1
+        wait-duration-in-open-state: 1m
+        record-exceptions:
+          - org.springframework.web.client.HttpServerErrorException
+          - java.net.SocketTimeoutException
+          - java.net.ConnectException
+          - org.springframework.web.reactive.function.client.WebClientRequestException
+          - org.springframework.web.reactive.function.client.WebClientResponseException
+          - org.springframework.web.client.ResourceAccessException
+        automatic-transition-from-open-to-half-open-enabled: true
+    instances:
+      *scrapper-service-circuit-breaker:
+        base-config: default
+
+  retry:
+    retry-aspect-order: 2
+    configs:
+      default:
+        max-attempts: 3
+        wait-duration: 500ms
+        enable-exponential-backoff: true
+        exponential-backoff-multiplier: 2
+        retry-exceptions:
+          - org.springframework.web.client.HttpServerErrorException
+          - java.net.SocketTimeoutException
+          - java.net.ConnectException
+          - org.springframework.web.reactive.function.client.WebClientRequestException
+          - org.springframework.web.reactive.function.client.WebClientResponseException
+          - org.springframework.web.client.ResourceAccessException
+        fail-after-max-attempts: true
+    instances:
+      *scrapper-service-retry:
+        base-config: default
+
+logging:
+  structured:
+    format:
+      console: ecs
+
+management:
+  server:
+    port: ${BOT_MANAGEMENT_PORT}
+  metrics:
+    tags:
+      application: ${spring.application.name}
+  endpoints:
+    web:
+      exposure:
+        include: health, info, metrics, prometheus
+  prometheus:
+    metrics:
+      export:
+        enabled: true

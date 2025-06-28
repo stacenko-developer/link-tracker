@@ -1,0 +1,178 @@
+app:
+  github-token: ${GITHUB_TOKEN}
+  stackoverflow:
+    key: ${STACKOVERFLOW_KEY}
+    access-token: ${STACKOVERFLOW_ACCESS_TOKEN}
+  access-type: ORM
+  message-transport: KAFKA
+  cache:
+    bot-tracking-links: botTrackingLinks
+    scrapper-tracking-links: scrapperTrackingLinks
+  kafka-topics:
+    immediate-link-update: immediate_link_update
+    digest-link-update: digest_link_update
+  resilience-instances:
+    github:
+      circuit-breaker: &github-circuit-breaker github-circuit-breaker
+      retry: &github-retry github-retry
+    stackoverflow:
+      circuit-breaker: &stackoverflow-circuit-breaker stackoverflow-circuit-breaker
+      retry: &stackoverflow-retry stackoverflow-retry
+    http-notification-sender:
+      circuit-breaker: &http-notification-sender-circuit-breaker http-notification-sender-circuit-breaker
+      retry: &http-notification-sender-retry http-notification-sender-retry
+    kafka-notification-sender:
+      circuit-breaker: &kafka-notification-sender-circuit-breaker kafka-notification-sender-circuit-breaker
+
+spring:
+  application:
+    name: Scrapper
+  liquibase:
+    enabled: false
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+  datasource:
+    username: ${POSTGRES_USER}
+    password: ${POSTGRES_PASSWORD}
+    url: jdbc:postgresql://${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}
+  data:
+    redis:
+      host: ${REDIS_HOST}
+      port: ${REDIS_PORT}
+      password: ${REDIS_PASSWORD}
+  kafka:
+    bootstrap-servers: ${KAFKA_HOST}:${KAFKA_PORT}
+    producer:
+      retries: 3
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        spring.json.add.type.headers: false
+        delivery.timeout.ms: 30000
+        request.timeout.ms: 5000
+        max.block.ms: 60000
+        linger.ms: 100
+        retry.backoff.ms: 1000
+  threads:
+    virtual:
+      enabled: true
+
+server:
+  port: ${SCRAPPER_SERVICE_PORT}
+
+springdoc:
+  swagger-ui:
+    enabled: true
+    path: /swagger-ui
+
+client:
+  bot:
+    base-url: http://${BOT_HOST}:${BOT_PORT}
+    connect-timeout-millis: 2000
+    read-timeout-millis: 3000
+    response-timeout-millis: 5000
+  github:
+    base-url: https://api.github.com/
+    connect-timeout-millis: 2000
+    read-timeout-millis: 3000
+    response-timeout-millis: 5000
+  stackoverflow:
+    base-url: https://api.stackexchange.com/2.3
+    connect-timeout-millis: 2000
+    read-timeout-millis: 3000
+    response-timeout-millis: 5000
+
+rate-limiter:
+  limit-for-period: 5
+  limit-refresh-period: 1s
+  timeout-duration: 0
+
+scheduler:
+  track-updating-links:
+    period-minutes: 1m
+    retry-delay-minutes: 10m
+    links-limit-per-track: 100
+    threads-count: 4
+    await-timeout-minutes: 1
+  send-digest-notifications:
+    start-time-cron: 0 0 10 * * *
+    batch-size: 100
+  orphan-remove:
+    period-minutes: 1440m
+
+resilience4j:
+  circuitbreaker:
+    circuit-breaker-aspect-order: 1
+    configs:
+      default:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 20
+        minimum-number-of-calls: 10
+        failure-rate-threshold: 50
+        permitted-number-of-calls-in-half-open-state: 1
+        wait-duration-in-open-state: 30s
+        record-exceptions:
+          - org.springframework.web.client.HttpServerErrorException
+          - java.net.SocketTimeoutException
+          - java.net.ConnectException
+          - org.springframework.web.reactive.function.client.WebClientRequestException
+          - org.springframework.web.reactive.function.client.WebClientResponseException
+          - org.springframework.web.client.ResourceAccessException
+          - org.apache.kafka.common.errors.InterruptException
+        automatic-transition-from-open-to-half-open-enabled: true
+    instances:
+      *github-circuit-breaker:
+        base-config: default
+      *stackoverflow-circuit-breaker:
+        base-config: default
+      *http-notification-sender-circuit-breaker:
+        base-config: default
+      *kafka-notification-sender-circuit-breaker:
+        base-config: default
+
+  retry:
+    retry-aspect-order: 2
+    configs:
+      default:
+        max-attempts: 3
+        wait-duration: 1s
+        enable-exponential-backoff: true
+        exponential-backoff-multiplier: 2
+        retry-exceptions:
+          - org.springframework.web.client.HttpServerErrorException
+          - java.net.SocketTimeoutException
+          - java.net.ConnectException
+          - org.springframework.web.reactive.function.client.WebClientRequestException
+          - org.springframework.web.reactive.function.client.WebClientResponseException
+          - org.springframework.web.client.ResourceAccessException
+        fail-after-max-attempts: true
+    instances:
+      *http-notification-sender-retry:
+        base-config: default
+      *github-retry:
+        base-config: default
+      *stackoverflow-retry:
+        base-config: default
+
+logging:
+  structured:
+    format:
+      console: ecs
+
+management:
+  server:
+    port: ${SCRAPPER_MANAGEMENT_PORT}
+  metrics:
+    tags:
+      application: ${spring.application.name}
+  endpoints:
+    web:
+      exposure:
+        include: health, info, metrics, prometheus
+  prometheus:
+    metrics:
+      export:
+        enabled: true
